@@ -26,7 +26,6 @@ jobs:
 
       - name: Deduce tags
         run: |
-          git fetch --tags  # does this fix shallow clone?
           mkdir source
           echo "latest" > source/tags
           if tag=$(git describe --exact-match --tags)
