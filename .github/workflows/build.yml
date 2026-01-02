@@ -1,7 +1,11 @@
 name: Build ShellCheck
+on:
 
 # Run this workflow every time a new commit pushed to your repository
-on: push
+  push:
+
+# or manually trigger from the Actions tab
+  workflow_dispatch:
 
 jobs:
   package_source:
