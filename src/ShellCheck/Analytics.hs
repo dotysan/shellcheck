@@ -5053,6 +5053,8 @@ prop_checkCommandIsUnreachable6 = verifyNot checkCommandIsUnreachable "return ||
 prop_checkCommandIsUnreachable7 = verifyNot checkCommandIsUnreachable "return 2>/dev/null ||:"
 prop_checkCommandIsUnreachable8 = verifyNot checkCommandIsUnreachable "return; echo 'reachable when not in function'"
 prop_checkCommandIsUnreachable9 = verify checkCommandIsUnreachable "f() { return; echo unreachable; }"
+prop_checkCommandIsUnreachable10 = verifyNot checkCommandIsUnreachable "f; f() { :; }; exit $?"
+prop_checkCommandIsUnreachable11 = verifyNot checkCommandIsUnreachable "PS4func; PS4func() { echo test; }; exit $?"
 checkCommandIsUnreachable params t =
     case t of
         T_Pipeline {} -> sequence_ $ do
@@ -5062,10 +5064,11 @@ checkCommandIsUnreachable params t =
             guard . not $ isSourced params t
             guard . not $ any (\t -> isUnreachable t || isUnreachableFunction t) $ NE.drop 1 $ getPath (parentMap params) t
             return $ info (getId t) 2317 "Command appears to be unreachable. Check usage (or ignore if invoked indirectly)."
-        T_Function id _ _ _ _ ->
+        T_Function id _ _ name _ ->
             when (isUnreachableFunction t
                     && (not . any isUnreachableFunction . NE.drop 1 $ getPath (parentMap params) t)
-                    && (not $ isSourced params t)) $
+                    && (not $ isSourced params t)
+                    && (not $ isFunctionInvokedInReachableCode name)) $
                 info id 2329 "This function is never invoked. Check usage (or ignored if invoked indirectly)."
         _ -> return ()
   where
@@ -5078,6 +5081,18 @@ checkCommandIsUnreachable params t =
         cfga <- cfgAnalysis params
         state <- CF.getIncomingState cfga (getId t)
         return . not $ CF.stateIsReachable state
+    
+    -- Check if a function is invoked anywhere in reachable code
+    isFunctionInvokedInReachableCode :: String -> Bool
+    isFunctionInvokedInReachableCode name =
+        any isFunctionCall $ analyse findCalls (rootNode params)
+      where
+        findCalls token = when (isFunctionCall token) $ modify (token:)
+        isFunctionCall token =
+            case token of
+                T_SimpleCommand _ _ (cmd:_) ->
+                    getUnquotedLiteral cmd == Just name && not (isUnreachable token)
+                _ -> False
 
 
 prop_checkOverwrittenExitCode1 = verify checkOverwrittenExitCode "x; [ $? -eq 1 ] || [ $? -eq 2 ]"
