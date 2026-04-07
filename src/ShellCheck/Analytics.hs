@@ -5049,6 +5049,12 @@ prop_checkCommandIsUnreachable2 = verify checkCommandIsUnreachable "die() { exit
 prop_checkCommandIsUnreachable3 = verifyNot checkCommandIsUnreachable "foo; bar || exit; baz"
 prop_checkCommandIsUnreachable4 = verifyNot checkCommandIsUnreachable "f() { foo; };    # Maybe sourced"
 prop_checkCommandIsUnreachable5 = verify checkCommandIsUnreachable "f() { foo; }; exit  # Not sourced"
+prop_checkCommandIsUnreachable6 = verifyNot checkCommandIsUnreachable "return || true; echo 'reachable'"
+prop_checkCommandIsUnreachable7 = verifyNot checkCommandIsUnreachable "return 2>/dev/null ||:"
+prop_checkCommandIsUnreachable8 = verifyNot checkCommandIsUnreachable "return; echo 'reachable when not in function'"
+prop_checkCommandIsUnreachable9 = verify checkCommandIsUnreachable "f() { return; echo unreachable; }"
+prop_checkCommandIsUnreachable10 = verifyNot checkCommandIsUnreachable "PS4func() { :; }; PS4='$(PS4func)'; exit"
+prop_checkCommandIsUnreachable11 = verifyNot checkCommandIsUnreachable "f() { :; }; var=`f`; exit"
 checkCommandIsUnreachable params t =
     case t of
         T_Pipeline {} -> sequence_ $ do
@@ -5058,10 +5064,11 @@ checkCommandIsUnreachable params t =
             guard . not $ isSourced params t
             guard . not $ any (\t -> isUnreachable t || isUnreachableFunction t) $ NE.drop 1 $ getPath (parentMap params) t
             return $ info (getId t) 2317 "Command appears to be unreachable. Check usage (or ignore if invoked indirectly)."
-        T_Function id _ _ _ _ ->
+        T_Function id _ _ name _ ->
             when (isUnreachableFunction t
                     && (not . any isUnreachableFunction . NE.drop 1 $ getPath (parentMap params) t)
-                    && (not $ isSourced params t)) $
+                    && (not $ isSourced params t)
+                    && (not $ isFunctionReferencedInCommandSubstitution name)) $
                 info id 2329 "This function is never invoked. Check usage (or ignored if invoked indirectly)."
         _ -> return ()
   where
@@ -5074,6 +5081,44 @@ checkCommandIsUnreachable params t =
         cfga <- cfgAnalysis params
         state <- CF.getIncomingState cfga (getId t)
         return . not $ CF.stateIsReachable state
+    
+    -- Check if a function is referenced in command substitution or prompt variables
+    isFunctionReferencedInCommandSubstitution :: String -> Bool
+    isFunctionReferencedInCommandSubstitution name =
+        not . null $ analyse findReferences (rootNode params)
+      where
+        findReferences token =
+            case token of
+                -- Check in $() command substitutions  
+                T_DollarExpansion _ _ ->
+                    when (hasFunctionCall token) $ modify (token:)
+                -- Check in backtick command substitutions
+                T_Backticked _ _ ->
+                    when (hasFunctionCall token) $ modify (token:)
+                -- Check in assignments to prompt variables (PS1, PS2, PS3, PS4, PROMPT_COMMAND)
+                -- These variables are evaluated by bash even in single quotes
+                T_Assignment _ _ varname _ value ->
+                    when (varname `elem` promptVars && hasFunctionReference value) $ modify (token:)
+                _ -> return ()
+        promptVars = ["PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND"]
+        hasFunctionCall token =
+            not . null $ analyse findFunctionCalls token
+        hasFunctionReference token =
+            -- Check if function name appears in the value
+            -- For prompt variables, they can contain:
+            -- 1. Direct command names (PROMPT_COMMAND='funcname')
+            -- 2. Command substitutions with $(...) or `...`
+            case getLiteralString token of
+                Just str -> 
+                    name == str  -- Direct function name
+                    || ("$(" ++ name) `isInfixOf` str  -- $(funcname)
+                    || ("`" ++ name) `isInfixOf` str   -- `funcname`
+                Nothing -> hasFunctionCall token
+        findFunctionCalls token =
+            case token of
+                T_SimpleCommand _ _ (cmd:_) ->
+                    when (getUnquotedLiteral cmd == Just name) $ modify (token:)
+                _ -> return ()
 
 
 prop_checkOverwrittenExitCode1 = verify checkOverwrittenExitCode "x; [ $? -eq 1 ] || [ $? -eq 2 ]"
