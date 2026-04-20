@@ -1147,7 +1147,7 @@ checkSingleQuotedVariables params t@(T_SingleQuoted id s) =
             || "perl" `isPrefixOf` commandName
             || isConcatenatedWithExpansion
 
-    commonlyQuoted = ["PS0", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND"]
+    commonlyQuoted = ["PS0", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND"] -- PS0 is bash 4.4+
     isOkAssignment t =
         case t of
             T_Assignment _ _ name _ _ -> name `elem` commonlyQuoted
