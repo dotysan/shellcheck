@@ -1086,6 +1086,16 @@ prop_checkSingleQuotedVariables22 = verifyNot checkSingleQuotedVariables "jq '$_
 prop_checkSingleQuotedVariables23 = verifyNot checkSingleQuotedVariables "command jq '$__loc__'"
 prop_checkSingleQuotedVariables24 = verifyNot checkSingleQuotedVariables "exec jq '$__loc__'"
 prop_checkSingleQuotedVariables25 = verifyNot checkSingleQuotedVariables "exec -c -a foo jq '$__loc__'"
+prop_checkSingleQuotedVariables26 = verifyNot checkSingleQuotedVariables "gojq '$__loc__'"
+prop_checkSingleQuotedVariables27 = verifyNot checkSingleQuotedVariables "dash -c 'echo $1'"
+prop_checkSingleQuotedVariables28 = verifyNot checkSingleQuotedVariables "script -qec 'var=txt; echo \"$var\"' /dev/null"
+prop_checkSingleQuotedVariables29 = verifyNot checkSingleQuotedVariables "printf 'eval \"$(pyenv init - %s)\"' \"$shell\""
+prop_checkSingleQuotedVariables30 = verifyNot checkSingleQuotedVariables "PS0='`history -a`'$PS0"
+prop_checkSingleQuotedVariables31 = verifyNot checkSingleQuotedVariables "echo '\\.$'\"$tld\"'\\.$'"
+prop_checkSingleQuotedVariables32 = verifyNot checkSingleQuotedVariables "echo '$foo'\"$bar\""
+prop_checkSingleQuotedVariables33 = verify checkSingleQuotedVariables "echo '$foo'"
+prop_checkSingleQuotedVariables34 = verifyNot checkSingleQuotedVariables "find . -exec dash -c 'echo \"$1\"' shell {} \\;"
+prop_checkSingleQuotedVariables35 = verifyNot checkSingleQuotedVariables "run --separate-stderr bash -c 'echo \"$1\"'"
 
 
 checkSingleQuotedVariables params t@(T_SingleQuoted id s) =
@@ -1110,6 +1120,7 @@ checkSingleQuotedVariables params t@(T_SingleQuoted id s) =
                 ,"bash"
                 ,"ksh"
                 ,"zsh"
+                ,"dash"
                 ,"ssh"
                 ,"eval"
                 ,"xprop"
@@ -1122,17 +1133,21 @@ checkSingleQuotedVariables params t@(T_SingleQuoted id s) =
                 ,"oc"
                 ,"dpkg-query"
                 ,"jq"  -- could also check that user provides --arg
+                ,"gojq" -- golang implementation of jq
                 ,"rename"
                 ,"rg"
                 ,"unset"
+                ,"printf"
+                ,"script"
                 ,"git filter-branch"
                 ,"mumps -run %XCMD"
                 ,"mumps -run LOOP%XCMD"
                 ]
             || "awk" `isSuffixOf` commandName
             || "perl" `isPrefixOf` commandName
+            || isConcatenatedWithExpansion
 
-    commonlyQuoted = ["PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND"]
+    commonlyQuoted = ["PS0", "PS1", "PS2", "PS3", "PS4", "PROMPT_COMMAND"] -- PS0 is bash 4.4+
     isOkAssignment t =
         case t of
             T_Assignment _ _ name _ _ -> name `elem` commonlyQuoted
@@ -1141,6 +1156,21 @@ checkSingleQuotedVariables params t@(T_SingleQuoted id s) =
 
     re = mkRegex "\\$[{(0-9a-zA-Z_]|`[^`]+`"
     sedContra = mkRegex "\\$[{dpsaic]($|[^a-zA-Z])"
+
+    -- When a single-quoted string is part of a word that also contains
+    -- double-quoted segments with expansions, the user clearly understands
+    -- quoting and is intentionally keeping parts in single quotes.
+    isConcatenatedWithExpansion =
+        case NE.tail $ getPath parents t of
+            (T_NormalWord _ parts):_ -> any hasExpansion parts
+            _ -> False
+    hasExpansion (T_DoubleQuoted _ parts) = any isExpansionToken parts
+    hasExpansion _ = False
+    isExpansionToken T_DollarBraced {} = True
+    isExpansionToken T_DollarExpansion {} = True
+    isExpansionToken T_DollarArithmetic {} = True
+    isExpansionToken T_Backticked {} = True
+    isExpansionToken _ = False
 
     getFindCommand (T_SimpleCommand _ _ words) =
         let list = map getLiteralString words
